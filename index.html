@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>🎣 Рыбалка Бот</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+      background: #f5f5f5; 
+      color: #1a1a1a;
+    }
+    #map { height: 55vh; width: 100%; }
+    
+    .panel { 
+      padding: 16px; 
+      background: white; 
+      border-radius: 20px 20px 0 0; 
+      margin-top: -20px; 
+      position: relative; 
+      z-index: 1000;
+      min-height: 45vh;
+    }
+    
+    .header-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .header-subtitle {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 14px;
+    }
+    
+    .filters { 
+      display: flex; 
+      gap: 8px; 
+      margin-bottom: 14px; 
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+    .filter-btn { 
+      padding: 8px 16px; 
+      border: 1.5px solid #e0e0e0; 
+      border-radius: 20px; 
+      background: white; 
+      font-size: 14px; 
+      white-space: nowrap;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-weight: 500;
+    }
+    .filter-btn:hover { border-color: #000; }
+    .filter-btn.active { 
+      background: #1a1a1a; 
+      color: white; 
+      border-color: #1a1a1a; 
+    }
+    
+    .spot-card { 
+      border: 1px solid #eee; 
+      border-radius: 14px; 
+      padding: 14px; 
+      margin-bottom: 10px;
+      background: #fafafa;
+      transition: transform 0.15s;
+    }
+    .spot-card:active { transform: scale(0.98); }
+    
+    .spot-header { 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+      margin-bottom: 10px; 
+    }
+    .spot-name { font-weight: 700; font-size: 16px; }
+    
+    .spot-score { 
+      padding: 5px 14px; 
+      border-radius: 20px; 
+      font-weight: 800; 
+      font-size: 14px;
+      color: white;
+    }
+    .spot-score.high { background: #22c55e; }
+    .spot-score.medium { background: #f59e0b; }
+    .spot-score.low { background: #ef4444; }
+    
+    .spot-info { 
+      font-size: 13px; 
+      color: #555; 
+      line-height: 1.7; 
+    }
+    .spot-info span { display: block; }
+    
+    .spot-gear {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #eee;
+      font-size: 12px;
+      color: #777;
+    }
+    
+    .loading { 
+      text-align: center; 
+      padding: 50px 20px; 
+      color: #999; 
+      font-size: 15px;
+    }
+    
+    .bottom-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: white;
+      border-top: 1px solid #eee;
+      padding: 10px 16px 24px;
+      display: flex;
+      gap: 10px;
+      z-index: 2000;
+    }
+    .main-btn {
+      flex: 1;
+      padding: 14px;
+      border-radius: 12px;
+      border: none;
+      background: #1a1a1a;
+      color: white;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .secondary-btn {
+      padding: 14px 20px;
+      border-radius: 12px;
+      border: 1.5px solid #1a1a1a;
+      background: white;
+      color: #1a1a1a;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #999;
+    }
+    .empty-state .emoji { font-size: 48px; margin-bottom: 12px; display: block; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  
+  <div class="panel">
+    <div class="header-title">🎣 Где клюёт сейчас</div>
+    <div class="header-subtitle">Выбери рыбу — покажем лучшие точки</div>
+    
+    <div class="filters">
+      <button class="filter-btn active" onclick="filterFish('all', this)">🐟 Все</button>
+      <button class="filter-btn" onclick="filterFish('щука', this)">🐊 Щука</button>
+      <button class="filter-btn" onclick="filterFish('судак', this)">🦈 Судак</button>
+      <button class="filter-btn" onclick="filterFish('окунь', this)">🐠 Окунь</button>
+      <button class="filter-btn" onclick="filterFish('лещ', this)">🐡 Лещ</button>
+      <button class="filter-btn" onclick="filterFish('карась', this)">🐢 Карась</button>
+    </div>
+    
+    <div id="spots-list">
+      <div class="loading">🎣 Ищем лучшие места...</div>
+    </div>
+    
+    <div style="height: 80px;"></div>
+  </div>
+  
+  <div class="bottom-bar">
+    <button class="main-btn" onclick="findNearby()">📍 Рядом со мной</button>
+    <button class="secondary-btn" onclick="openReport()">✏️ Отчёт</button>
+  </div>
+
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.expand();
+    tg.ready();
+    tg.MainButton.setText('🔄 Обновить данные');
+    tg.MainButton.onClick(() => loadSpots(currentFilter));
+    tg.MainButton.show();
+
+    const map = L.map('map').setView([55.75, 37.61], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    // ⚠️ ЗАМЕНИ на свой n8n webhook URL
+    const N8N_WEBHOOK = 'https://ТВОЙ-N8N-ДОМЕН/webhook/fish-advice';
+    
+    let allSpots = [];
+    let currentFilter = 'all';
+
+    async function loadSpots(fish = 'all') {
+      currentFilter = fish;
+      const list = document.getElementById('spots-list');
+      list.innerHTML = '<div class="loading">🎣 Ищем лучшие места...</div>';
+      
+      try {
+        const res = await fetch(N8N_WEBHOOK, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fish: fish === 'all' ? null : fish,
+            lat: 55.75,
+            lon: 37.61,
+            date: new Date().toISOString().split('T')[0]
+          })
+        });
+        
+        const data = await res.json();
+        allSpots = data.spots || [];
+        renderSpots(allSpots);
+        renderMarkers(allSpots);
+        
+        tg.HapticFeedback.notificationOccurred('success');
+      } catch (e) {
+        list.innerHTML = `
+          <div class="empty-state">
+            <span class="emoji">😢</span>
+            <div>Не удалось загрузить данные</div>
+            <div style="font-size:13px; margin-top:8px; color:#bbb;">Проверь подключение к интернету</div>
+          </div>
+        `;
+        tg.HapticFeedback.notificationOccurred('error');
+      }
+    }
+
+    function renderSpots(spots) {
+      const list = document.getElementById('spots-list');
+      if (!spots.length) {
+        list.innerHTML = `
+          <div class="empty-state">
+            <span class="emoji">🕸️</span>
+            <div>Ничего не клюёт</div>
+            <div style="font-size:13px; margin-top:8px; color:#bbb;">Попробуй другой вид рыбы или регион</div>
+          </div>
+        `;
+        return;
+      }
+      
+      list.innerHTML = spots.map(spot => {
+        const scoreClass = spot.bite_score >= 8 ? 'high' : spot.bite_score >= 5 ? 'medium' : 'low';
+        const scoreText = spot.bite_score >= 8 ? '🔥 Отлично' : spot.bite_score >= 5 ? '⚡ Нормально' : '💤 Слабо';
+        
+        return `
+          <div class="spot-card" onclick="showSpotDetail(${spot.id})">
+            <div class="spot-header">
+              <span class="spot-name">${spot.name}</span>
+              <span class="spot-score ${scoreClass}">${spot.bite_score}/10</span>
+            </div>
+            <div class="spot-info">
+              <span>🐟 ${spot.fish_types?.join(', ') || '—'}</span>
+              <span>🌡️ ${spot.weather?.temp || '?'}°C, ${spot.weather?.description || 'ясно'}</span>
+              <span>📍 ${spot.region || '—'}</span>
+              <span>⏰ Лучшее время: ${spot.best_time || 'рассвет/закат'}</span>
+            </div>
+            ${spot.gear ? `
+              <div class="spot-gear">
+                🎣 ${spot.gear.rod || ''} ${spot.gear.lures ? '• ' + spot.gear.lures.slice(0,2).join(', ') : ''}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderMarkers(spots) {
+      map.eachLayer(l => { if (l instanceof L.Marker || l instanceof L.CircleMarker) map.removeLayer(l); });
+      
+      spots.forEach(spot => {
+        const color = spot.bite_score >= 8 ? '#22c55e' : spot.bite_score >= 5 ? '#f59e0b' : '#ef4444';
+        const marker = L.circleMarker([spot.lat, spot.lon], {
+          radius: 10,
+          fillColor: color,
+          color: '#fff',
+          weight: 2.5,
+          opacity: 1,
+          fillOpacity: 0.9
+        }).addTo(map);
+        
+        marker.bindPopup(`
+          <div style="font-family:sans-serif; min-width:180px;">
+            <div style="font-weight:700; font-size:15px; margin-bottom:6px;">${spot.name}</div>
+            <div style="font-size:13px; color:#555; margin-bottom:4px;">
+              Клёв: <b>${spot.bite_score}/10</b> ${spot.bite_score >= 8 ? '🔥' : ''}
+            </div>
+            <div style="font-size:12px; color:#777;">
+              🌡️ ${spot.weather?.temp || '?'}°C • ${spot.weather?.description || '—'}
+            </div>
+          </div>
+        `);
+      });
+      
+      if (spots.length) {
+        const group = new L.featureGroup(spots.map(s => L.marker([s.lat, s.lon])));
+        map.fitBounds(group.getBounds().pad(0.2));
+      }
+    }
+
+    function filterFish(type, btn) {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      loadSpots(type);
+      tg.HapticFeedback.impactOccurred('light');
+    }
+
+    function findNearby() {
+      tg.showPopup({
+        title: '📍 Геолокация',
+        message: 'Разрешить доступ к местоположению?',
+        buttons: [
+          { id: 'yes', type: 'default', text: 'Разрешить' },
+          { id: 'no', type: 'cancel', text: 'Отмена' }
+        ]
+      }, (btnId) => {
+        if (btnId === 'yes') {
+          tg.HapticFeedback.impactOccurred('medium');
+        }
+      });
+    }
+
+    function openReport() {
+      tg.showPopup({
+        title: '✏️ Отчёт о рыбалке',
+        message: 'Напиши @твой_бот — там можно оставить отчёт о клёве',
+        buttons: [{ type: 'ok', text: 'Понятно' }]
+      });
+    }
+
+    function showSpotDetail(id) {
+      const spot = allSpots.find(s => s.id === id);
+      if (!spot) return;
+      
+      tg.showPopup({
+        title: spot.name,
+        message: `${spot.advice || 'Хорошее место для рыбалки!'}\n\n🎣 Снаряжение: ${spot.gear?.rod || '—'}\n🐟 Приманки: ${spot.gear?.lures?.join(', ') || '—'}\n⛔ ${spot.restrictions || 'Ограничений нет'}`,
+        buttons: [
+          { id: 'route', type: 'default', text: '🗺️ Маршрут' },
+          { type: 'cancel', text: 'Закрыть' }
+        ]
+      }, (btnId) => {
+        if (btnId === 'route') {
+          tg.openLink(`https://yandex.ru/maps/?rtext=~${spot.lat},${spot.lon}&rtt=auto`);
+        }
+      });
+    }
+
+    setInterval(() => loadSpots(currentFilter), 300000);
+    loadSpots();
+  </script>
+</body>
+</html>
