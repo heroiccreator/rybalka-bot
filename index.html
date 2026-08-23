@@ -20,6 +20,7 @@
             --accent: #ff6b35;
             --danger: #e74c3c;
             --success: #2ecc71;
+            --warning: #f39c12;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -88,10 +89,11 @@
             background: var(--primary);
             color: #000;
         }
-        #map {
-            flex: 1;
-            min-height: 0;
+        .filter-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
         }
+        #map { flex: 1; min-height: 0; }
         .leaflet-popup-content-wrapper {
             background: var(--surface);
             color: var(--text);
@@ -104,9 +106,7 @@
             padding: 12px 16px;
             max-height: 45vh;
             overflow-y: auto;
-            transition: transform 0.3s;
         }
-        .bottom-panel.hidden { transform: translateY(100%); }
         .result-card {
             background: var(--bg);
             border-radius: 16px;
@@ -114,6 +114,15 @@
             margin-bottom: 10px;
         }
         .result-card h3 { font-size: 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+        .warning-box {
+            background: rgba(243, 156, 18, 0.1);
+            border-left: 3px solid var(--warning);
+            padding: 12px;
+            border-radius: 0 10px 10px 0;
+            margin-bottom: 10px;
+            font-size: 13px;
+            color: var(--warning);
+        }
         .weather-row {
             display: flex;
             gap: 12px;
@@ -137,7 +146,7 @@
             font-size: 14px;
         }
         .bite-score.high { color: var(--success); }
-        .bite-score.medium { color: #f1c40f; }
+        .bite-score.medium { color: var(--warning); }
         .bite-score.low { color: var(--danger); }
         .advice-box {
             background: var(--surface-light);
@@ -148,16 +157,8 @@
             font-size: 13px;
             line-height: 1.5;
         }
-        .loading {
-            text-align: center;
-            padding: 20px;
-            color: var(--text-secondary);
-        }
-        .error {
-            text-align: center;
-            padding: 20px;
-            color: var(--danger);
-        }
+        .loading { text-align: center; padding: 20px; color: var(--text-secondary); }
+        .error { text-align: center; padding: 20px; color: var(--danger); }
         .loc-btn {
             position: absolute;
             bottom: 20px;
@@ -175,6 +176,19 @@
             cursor: pointer;
             box-shadow: 0 4px 15px rgba(0,212,170,0.3);
         }
+        .fish-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin: 8px 0;
+        }
+        .fish-tag {
+            background: var(--surface-light);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
     </style>
 <base target="_blank">
 </head>
@@ -188,13 +202,8 @@
             </div>
         </div>
 
-        <div class="filters">
+        <div class="filters" id="filters">
             <button class="filter-btn active" onclick="setFish('all')">🐟 Все</button>
-            <button class="filter-btn" onclick="setFish('щука')">🐊 Щука</button>
-            <button class="filter-btn" onclick="setFish('судак')">🦈 Судак</button>
-            <button class="filter-btn" onclick="setFish('окунь')">🐠 Окунь</button>
-            <button class="filter-btn" onclick="setFish('лещ')">🐡 Лещ</button>
-            <button class="filter-btn" onclick="setFish('карась')">🐢 Карась</button>
         </div>
 
         <div id="map"></div>
@@ -206,19 +215,16 @@
     </div>
 
     <script>
-        // ===== КОНФИГУРАЦИЯ (уже заполнена) =====
         const N8N_WEBHOOK_URL = 'https://vadim.n8nmanage.com/webhook/fish-advice';
         const SUPABASE_URL = 'https://utgobcpthqhedqibkupc.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0Z29iY3B0aHFoZWRxaWJrdXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczNDM5MzMsImV4cCI6MjEwMjkxOTkzM30.BhbqZKdonfNjjItjWaMUPuHirS4ZIi_8h5yqX0iDaGw';
 
-        // Telegram WebApp init
         let tg = window.Telegram.WebApp;
         tg.ready();
         tg.expand();
         tg.MainButton.setText('🔄 Обновить данные');
         tg.MainButton.onClick(() => { if(lastQuery) searchSpot(lastQuery); });
 
-        // Map init
         const map = L.map('map').setView([55.7558, 37.6173], 5);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap'
@@ -227,12 +233,31 @@
         let currentFish = 'all';
         let lastQuery = '';
         let markers = [];
+        let currentFishTypes = ['щука','судак','окунь','лещ','карась'];
 
         function setFish(fish) {
             currentFish = fish;
             document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
             event.target.classList.add('active');
             if(lastQuery) searchSpot(lastQuery);
+        }
+
+        function renderFilters(fishTypes) {
+            const container = document.getElementById('filters');
+            let html = '<button class="filter-btn active" onclick="setFish('all')">🐟 Все</button>';
+
+            const fishEmojis = {
+                'щука': '🐊', 'судак': '🦈', 'окунь': '🐠', 'лещ': '🐡', 'карась': '🐢',
+                'треска': '🐟', 'палтус': '🐋', 'сёмга': '🐟', 'морской окунь': '🐠', 'камбала': '🐡',
+                'голавль': '🐟', 'язь': '🐟', 'линь': '🐢'
+            };
+
+            fishTypes.forEach(fish => {
+                const emoji = fishEmojis[fish] || '🐟';
+                html += `<button class="filter-btn" onclick="setFish('${fish}')">${emoji} ${fish}</button>`;
+            });
+
+            container.innerHTML = html;
         }
 
         function clearMarkers() {
@@ -256,6 +281,13 @@
                     body: JSON.stringify({ query, fish: currentFish })
                 });
                 const data = await res.json();
+
+                // Обновляем фильтры под реальную рыбу этого водоёма
+                if(data.spots && data.spots[0] && data.spots[0].fish_types) {
+                    currentFishTypes = data.spots[0].fish_types;
+                    renderFilters(currentFishTypes);
+                }
+
                 renderResults(data);
             } catch(e) {
                 console.error(e);
@@ -276,20 +308,35 @@
                 const place = geoData[0];
                 const lat = parseFloat(place.lat);
                 const lon = parseFloat(place.lon);
+                const name = place.display_name.toLowerCase();
+
+                // Определяем тип водоёма
+                let fishTypes = ['щука','судак','окунь','лещ','карась'];
+                let warning = '';
+
+                if(name.includes('море') || name.includes('sea') || name.includes('ocean') || name.includes('океан')) {
+                    fishTypes = ['треска','палтус','сёмга','морской окунь','камбала'];
+                    warning = '⚠️ Морская рыбалка. Пресноводная рыба (щука, лещ, карась) здесь не водится.';
+                } else if(name.includes('река') || name.includes('river')) {
+                    fishTypes = ['щука','судак','окунь','лещ','голавль','язь'];
+                }
+
+                currentFishTypes = fishTypes;
+                renderFilters(fishTypes);
 
                 const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,pressure_msl&timezone=auto`);
                 const weather = await weatherRes.json();
                 const w = weather.current;
 
                 const biteScore = calculateBiteScore(w.temperature_2m, w.pressure_msl, w.wind_speed_10m, w.weather_code);
-                const advice = generateAdvice(currentFish, w.temperature_2m, w.weather_code, biteScore);
+                const advice = generateAdvice(currentFish, w.temperature_2m, w.weather_code, biteScore, fishTypes, warning);
 
                 const result = {
                     spots: [{
                         name: place.display_name.split(',')[0],
                         description: place.display_name,
                         lat, lon,
-                        fish_types: ['щука','судак','окунь','лещ','карась']
+                        fish_types: fishTypes
                     }],
                     weather: {
                         temp: w.temperature_2m,
@@ -298,7 +345,8 @@
                         humidity: w.relative_humidity_2m
                     },
                     biteScore,
-                    advice
+                    advice,
+                    warning
                 };
 
                 renderResults(result);
@@ -329,23 +377,36 @@
             return Math.max(1, Math.min(10, Math.round(score)));
         }
 
-        function generateAdvice(fish, temp, code, score) {
-            const fishTips = {
-                'щука': 'Щука активна на границе травы. Используйте воблеры или живца.',
-                'судак': 'Судак стоит на ямах и бровках. Джиг — лучший выбор.',
-                'окунь': 'Окунь клюёт на микроджиг и мормышку. Ищите коряги.',
-                'лещ': 'Леща ловите на донку с макухой или опарышем.',
-                'карась': 'Карась берёт на червя и кукурузу в тёплой залишне.',
-                'all': 'Пробуйте разные снасти в зависимости от целевой рыбы.'
+        function generateAdvice(fish, temp, code, score, fishTypes, warning) {
+            const tips = {
+                'треска': 'Треска на донку с креветкой. Глубина 50-150м.',
+                'палтус': 'Палтус — джиг с крупными силиконовыми приманками.',
+                'сёмга': 'Сёмга на спиннинг с блёснами. Рассвет и закат.',
+                'морской окунь': 'Морской окунь на мормышку и маленькие воблеры.',
+                'камбала': 'Камбала — донка с червём или креветкой.',
+                'щука': 'Щука на границе травы. Воблеры и живец.',
+                'судак': 'Судак на ямах. Джиг с твистером.',
+                'окунь': 'Окунь на микроджиг у коряг.',
+                'лещ': 'Лещ на донку с макухой.',
+                'карась': 'Карась на червя и кукурузу.',
+                'голавль': 'Голавль — спиннинг с маленькими воблерами у перекатов.',
+                'язь': 'Язь на маховую удочку с мотылём.',
+                'линь': 'Линь — донка с червём в тихих заливах.'
             };
 
             let weatherText = '';
-            if(temp < 5) weatherText = 'Холодно — одевайтесь теплее, рыба вялая.';
-            else if(temp > 25) weatherText = 'Жара — рыба уходит на глубину, ловите рано утром.';
+            if(temp < 5) weatherText = 'Холодно — одевайтесь теплее.';
+            else if(temp > 25) weatherText = 'Жара — рыба на глубине, ловите утром/вечером.';
             else weatherText = 'Температура комфортная для рыбалки.';
 
-            const tip = fishTips[fish] || fishTips['all'];
-            return `${weatherText} ${tip} Прогноз клёва: ${score}/10.`;
+            const target = fish !== 'all' ? fish : fishTypes[0];
+            const tip = tips[target] || tips[fishTypes[0]] || 'Пробуйте разные снасти.';
+
+            let result = `${weatherText} ${tip}`;
+            if(warning) result = `${warning}
+
+${result}`;
+            return result;
         }
 
         function renderResults(data) {
@@ -362,10 +423,21 @@
                 const scoreClass = data.biteScore >= 7 ? 'high' : data.biteScore >= 4 ? 'medium' : 'low';
                 const scoreEmoji = data.biteScore >= 7 ? '🔥' : data.biteScore >= 4 ? '👍' : '❄️';
 
+                if(data.warning) {
+                    html += `<div class="warning-box">${data.warning}</div>`;
+                }
+
                 html += `
                 <div class="result-card">
                     <h3>📍 ${spot.name}</h3>
                     <p style="color:var(--text-secondary);font-size:13px;margin-bottom:10px;">${spot.description || ''}</p>
+
+                    <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">
+                        🐟 Рыба в этом водоёме:
+                    </div>
+                    <div class="fish-list">
+                        ${spot.fish_types.map(f => `<span class="fish-tag">${f}</span>`).join('')}
+                    </div>
 
                     <div class="weather-row">
                         <div class="weather-item">🌡️ ${data.weather.temp}°C</div>
