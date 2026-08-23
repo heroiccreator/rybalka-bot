@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>🎣 Рыбалка на карте</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://api-maps.yandex.ru/2.1/?apikey=11c4083f-96f2-4c7d-8329-b2f0bb376c66&lang=ru_RU" type="text/javascript"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -92,11 +93,14 @@
             flex: 1;
             min-height: 0;
             background: var(--bg);
+            z-index: 1;
         }
-        .ymaps-2-1-79-copyright {
-            opacity: 0.5 !important;
+        .leaflet-control-attribution {
+            background: rgba(15, 20, 25, 0.8) !important;
+            color: var(--text-secondary) !important;
+            font-size: 10px !important;
         }
-        .ymaps-2-1-79-copyright__link {
+        .leaflet-control-attribution a {
             color: var(--text-secondary) !important;
         }
         .bottom-panel {
@@ -105,6 +109,7 @@
             padding: 12px 16px;
             max-height: 45vh;
             overflow-y: auto;
+            z-index: 1000;
         }
         .result-card {
             background: var(--bg);
@@ -161,7 +166,7 @@
         .error { text-align: center; padding: 20px; color: var(--danger); }
         .loc-btn {
             position: absolute;
-            bottom: 20px;
+            bottom: calc(45vh + 20px);
             right: 20px;
             z-index: 500;
             background: var(--primary);
@@ -193,8 +198,15 @@
             background: rgba(231, 76, 60, 0.15);
             color: var(--danger);
         }
+        .leaflet-popup-content-wrapper {
+            background: var(--surface);
+            color: var(--text);
+            border-radius: 12px;
+        }
+        .leaflet-popup-tip {
+            background: var(--surface);
+        }
     </style>
-<base target="_blank">
 <base target="_blank">
 </head>
 <body>
@@ -229,28 +241,25 @@
         tg.MainButton.onClick(() => { if(lastQuery) searchSpot(lastQuery); });
 
         let map;
-        let ymapsReady = false;
-        let mapError = '';
+        let markers = [];
 
-        ymaps.ready(() => {
-            ymapsReady = true;
-            try {
-                map = new ymaps.Map('map', {
-                    center: [55.7558, 37.6173],
-                    zoom: 5,
-                    controls: ['zoomControl']
-                });
-                map.controls.remove('searchControl');
-                map.controls.remove('trafficControl');
-                map.controls.remove('typeSelector');
-                map.controls.remove('fullscreenControl');
-                map.controls.remove('rulerControl');
-                console.log('✅ Яндекс карта загружена');
-            } catch(e) {
-                mapError = e.message;
-                console.error('❌ Ошибка инициализации карты:', e);
-            }
-        });
+        // Инициализация Leaflet карты
+        function initMap() {
+            map = L.map('map', {
+                zoomControl: false
+            }).setView([55.7558, 37.6173], 5);
+
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+            // Тёмная тема OpenStreetMap (CartoDB Dark Matter)
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap &copy; CARTO',
+                subdomains: 'abcd',
+                maxZoom: 19
+            }).addTo(map);
+        }
+
+        initMap();
 
         let currentFish = 'all';
         let lastQuery = '';
@@ -284,7 +293,8 @@
         }
 
         function clearMarkers() {
-            if(map && map.geoObjects) map.geoObjects.removeAll();
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
         }
 
         async function searchSpot(query) {
@@ -295,16 +305,6 @@
             const panel = document.getElementById('bottomPanel');
             panel.innerHTML = '<div class="loading">🔍 Ищем информацию о водоёме...</div>';
             tg.MainButton.show();
-
-            // Проверка: карта загружена?
-            if(!ymapsReady) {
-                panel.innerHTML = '<div class="error">❌ Карта ещё загружается. Подождите 2-3 секунды и попробуйте снова.</div>';
-                return;
-            }
-            if(mapError) {
-                panel.innerHTML = `<div class="error">❌ Ошибка карты: ${mapError}<br><br>Возможно, API-ключ невалиден. Проверьте консоль (F12).</div>`;
-                return;
-            }
 
             // Пробуем webhook с таймаутом
             let webhookData = null;
@@ -337,27 +337,32 @@
                 return;
             }
 
-            // Иначе fallback на Яндекс геокодер
+            // Иначе fallback на Nominatim (OpenStreetMap геокодер)
             await fallbackSearch(query);
         }
 
         async function fallbackSearch(query) {
             try {
-                console.log('Используем Яндекс геокодер для:', query);
-                const geoResult = await ymaps.geocode(query, { results: 1, lang: 'ru_RU' });
-                const geoObjects = geoResult.geoObjects;
+                console.log('Используем Nominatim геокодер для:', query);
 
-                if(geoObjects.getLength() === 0) {
+                // Nominatim API — бесплатный геокодер OpenStreetMap
+                const nominatimUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&accept-language=ru`;
+
+                const geoRes = await fetch(nominatimUrl, {
+                    headers: { 'User-Agent': 'FishMapApp/1.0' }
+                });
+                const geoData = await geoRes.json();
+
+                if(!geoData || geoData.length === 0) {
                     document.getElementById('bottomPanel').innerHTML = '<div class="error">❌ Водоём не найден. Попробуйте другой запрос.</div>';
                     return;
                 }
 
-                const place = geoObjects.get(0);
-                const coords = place.geometry.getCoordinates();
-                const lat = coords[0];
-                const lon = coords[1];
-                const fullName = (place.properties.get('text') || '').toLowerCase();
-                const name = place.properties.get('name') || 'Неизвестно';
+                const place = geoData[0];
+                const lat = parseFloat(place.lat);
+                const lon = parseFloat(place.lon);
+                const name = place.display_name.split(',')[0] || 'Неизвестно';
+                const fullName = place.display_name.toLowerCase();
 
                 console.log('Найдено:', name, lat, lon);
 
@@ -388,7 +393,7 @@
                 const result = {
                     spots: [{
                         name: name,
-                        description: place.properties.get('text') || '',
+                        description: place.display_name || '',
                         lat, lon,
                         fish_types: fishTypes,
                         water_type: waterType
@@ -535,23 +540,18 @@
                 </div>
                 `;
 
-                // ✅ Проверка: map существует?
-                if(map && map.geoObjects) {
-                    const placemark = new ymaps.Placemark([spot.lat, spot.lon], {
-                        balloonContent: `<b>${spot.name}</b><br>Клёв: ${data.biteScore}/10`
-                    }, {
-                        preset: 'islands#circleIcon',
-                        iconColor: '#00d4aa'
-                    });
-                    map.geoObjects.add(placemark);
+                // Leaflet маркер
+                if(map) {
+                    const marker = L.marker([spot.lat, spot.lon]).addTo(map);
+                    marker.bindPopup(`<b>${spot.name}</b><br>Клёв: ${data.biteScore}/10`);
+                    markers.push(marker);
                 }
             });
 
             panel.innerHTML = html;
 
-            // ✅ Проверка: map существует?
-            if(map && map.setCenter && data.spots.length > 0) {
-                map.setCenter([data.spots[0].lat, data.spots[0].lon], 12);
+            if(map && data.spots.length > 0) {
+                map.setView([data.spots[0].lat, data.spots[0].lon], 12);
             }
         }
 
@@ -566,18 +566,23 @@
                     const lat = pos.coords.latitude;
                     const lon = pos.coords.longitude;
 
-                    if(map && map.setCenter) {
-                        map.setCenter([lat, lon], 14);
+                    if(map) {
+                        map.setView([lat, lon], 14);
+                        const marker = L.marker([lat, lon]).addTo(map);
+                        marker.bindPopup('Вы здесь').openPopup();
+                        markers.push(marker);
                     }
 
-                    if(ymapsReady) {
-                        ymaps.geocode([lat, lon], { kind: 'locality', results: 1 }).then(res => {
-                            const name = res.geoObjects.get(0)?.properties.get('name') || 'Рядом со мной';
-                            searchSpot(name);
-                        }).catch(() => searchSpot(`${lat},${lon}`));
-                    } else {
-                        searchSpot(`${lat},${lon}`);
-                    }
+                    // Обратное геокодирование через Nominatim
+                    fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&accept-language=ru`, {
+                        headers: { 'User-Agent': 'FishMapApp/1.0' }
+                    })
+                    .then(r => r.json())
+                    .then(data => {
+                        const name = data.display_name ? data.display_name.split(',')[0] : 'Рядом со мной';
+                        searchSpot(name);
+                    })
+                    .catch(() => searchSpot(`${lat},${lon}`));
                 },
                 err => {
                     document.getElementById('bottomPanel').innerHTML = '<div class="error">❌ Не удалось получить геолокацию</div>';
