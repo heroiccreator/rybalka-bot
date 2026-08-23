@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>🎣 Рыбалка на карте</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- MapLibre GL JS для OpenFreeMap -->
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -93,13 +94,20 @@
             opacity: 0.3;
             cursor: not-allowed;
         }
-        #map { flex: 1; min-height: 0; }
-        .leaflet-popup-content-wrapper {
-            background: var(--surface);
-            color: var(--text);
-            border-radius: 12px;
+        #map {
+            flex: 1;
+            min-height: 0;
+            background: var(--bg);
         }
-        .leaflet-popup-tip { background: var(--surface); }
+        /* Стилизуем атрибуцию MapLibre */
+        .maplibregl-ctrl-attrib {
+            background: rgba(15, 20, 25, 0.85) !important;
+            color: var(--text-secondary) !important;
+            font-size: 9px !important;
+        }
+        .maplibregl-ctrl-attrib a {
+            color: var(--text-secondary) !important;
+        }
         .bottom-panel {
             background: var(--surface);
             border-top: 1px solid var(--surface-light);
@@ -222,8 +230,6 @@
 
     <script>
         const N8N_WEBHOOK_URL = 'https://vadim.n8nmanage.com/webhook/fish-advice';
-        const SUPABASE_URL = 'https://utgobcpthqhedqibkupc.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0Z29iY3B0aHFoZWRxaWJrdXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczNDM5MzMsImV4cCI6MjEwMjkxOTkzM30.BhbqZKdonfNjjItjWaMUPuHirS4ZIi_8h5yqX0iDaGw';
 
         let tg = window.Telegram.WebApp;
         tg.ready();
@@ -231,16 +237,22 @@
         tg.MainButton.setText('🔄 Обновить данные');
         tg.MainButton.onClick(() => { if(lastQuery) searchSpot(lastQuery); });
 
-        const map = L.map('map').setView([55.7558, 37.6173], 5);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap'
-        }).addTo(map);
+        // ✅ OpenFreeMap — бесплатно, без ключа, без регистрации
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: 'https://tiles.openfreemap.org/styles/liberty/style.json',
+            center: [37.6173, 55.7558], // [lon, lat]
+            zoom: 5,
+            attributionControl: true
+        });
 
-        setTimeout(() => map.invalidateSize(), 300);
+        // Кастомная кнопка геолокации
+        map.addControl(new maplibregl.NavigationControl(), 'top-left');
 
         let currentFish = 'all';
         let lastQuery = '';
         let markers = [];
+        let popups = [];
         let currentFishTypes = ['щука','судак','окунь','лещ','карась'];
 
         function setFish(fish) {
@@ -271,8 +283,10 @@
         }
 
         function clearMarkers() {
-            markers.forEach(m => map.removeLayer(m));
+            markers.forEach(m => m.remove());
+            popups.forEach(p => p.remove());
             markers = [];
+            popups = [];
         }
 
         async function searchSpot(query) {
@@ -492,16 +506,32 @@
                 </div>
                 `;
 
-                const marker = L.marker([spot.lat, spot.lon]).addTo(map);
-                marker.bindPopup(`<b>${spot.name}</b><br>Клёв: ${data.biteScore}/10`);
+                // ✅ MapLibre Marker
+                const el = document.createElement('div');
+                el.style.width = '24px';
+                el.style.height = '24px';
+                el.style.background = 'var(--primary)';
+                el.style.borderRadius = '50%';
+                el.style.border = '3px solid #fff';
+                el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
+                el.style.cursor = 'pointer';
+
+                const marker = new maplibregl.Marker(el)
+                    .setLngLat([spot.lon, spot.lat])
+                    .setPopup(new maplibregl.Popup({ offset: 15 }).setHTML(`<div style="font-family:Inter,sans-serif;padding:4px;"><b>${spot.name}</b><br>Клёв: ${data.biteScore}/10</div>`))
+                    .addTo(map);
                 markers.push(marker);
             });
 
             panel.innerHTML = html;
 
-            if(markers.length > 0) {
-                const group = new L.featureGroup(markers);
-                map.fitBounds(group.getBounds().pad(0.2));
+            // Центрируем карту
+            if(data.spots.length > 0) {
+                map.flyTo({
+                    center: [data.spots[0].lon, data.spots[0].lat],
+                    zoom: 12,
+                    essential: true
+                });
             }
         }
 
@@ -515,7 +545,12 @@
                 pos => {
                     const lat = pos.coords.latitude;
                     const lon = pos.coords.longitude;
-                    map.setView([lat, lon], 12);
+
+                    map.flyTo({
+                        center: [lon, lat],
+                        zoom: 14,
+                        essential: true
+                    });
 
                     fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=ru`)
                         .then(r => r.json())
@@ -535,7 +570,6 @@
             if(e.key === 'Enter') searchSpot();
         });
 
-        // ✅ Показываем фильтры сразу при загрузке
         renderFilters(currentFishTypes);
     </script>
 </body>
