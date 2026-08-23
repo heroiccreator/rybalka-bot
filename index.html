@@ -306,14 +306,14 @@
             lastQuery = query;
 
             const panel = document.getElementById('bottomPanel');
-            panel.innerHTML = '<div class="loading">🔍 Ищем информацию о водоёме...</div>';
+            panel.innerHTML = '<div class="loading">🔍 Ищем информацию о водоёме...<br><span style="font-size:12px;opacity:0.6">Это может занять до 10 секунд</span></div>';
             tg.MainButton.show();
 
             // Пробуем webhook с таймаутом
             let webhookData = null;
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
 
                 const res = await fetch(N8N_WEBHOOK_URL, {
                     method: 'POST',
