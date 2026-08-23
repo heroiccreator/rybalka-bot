@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>🎣 Рыбалка на карте</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <!-- Яндекс Карты API -->
     <script src="https://api-maps.yandex.ru/2.1/?apikey=14831b38-5a7e-4f15-b3c7-9e48b9ad151a&lang=ru_RU" type="text/javascript"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -89,16 +88,11 @@
             background: var(--primary);
             color: #000;
         }
-        .filter-btn:disabled {
-            opacity: 0.3;
-            cursor: not-allowed;
-        }
         #map {
             flex: 1;
             min-height: 0;
             background: var(--bg);
         }
-        /* Скрываем яркую атрибуцию Яндекса */
         .ymaps-2-1-79-copyright {
             opacity: 0.5 !important;
         }
@@ -234,20 +228,16 @@
         tg.MainButton.setText('🔄 Обновить данные');
         tg.MainButton.onClick(() => { if(lastQuery) searchSpot(lastQuery); });
 
-        // ✅ Яндекс Карты
         let map;
         let ymapsReady = false;
 
         ymaps.ready(() => {
             ymapsReady = true;
             map = new ymaps.Map('map', {
-                center: [55.7558, 37.6173], // [широта, долгота]
+                center: [55.7558, 37.6173],
                 zoom: 5,
                 controls: ['zoomControl']
             });
-
-            // Тёмная тема Яндекса (если доступна) или стандартная
-            // Убираем лишние контролы
             map.controls.remove('searchControl');
             map.controls.remove('trafficControl');
             map.controls.remove('typeSelector');
@@ -287,8 +277,7 @@
         }
 
         function clearMarkers() {
-            if(!map) return;
-            map.geoObjects.removeAll();
+            if(map) map.geoObjects.removeAll();
         }
 
         async function searchSpot(query) {
@@ -300,34 +289,49 @@
             panel.innerHTML = '<div class="loading">🔍 Ищем информацию о водоёме...</div>';
             tg.MainButton.show();
 
+            // Пробуем webhook с таймаутом
+            let webhookData = null;
             try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
+
                 const res = await fetch(N8N_WEBHOOK_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query, fish: currentFish })
+                    body: JSON.stringify({ query, fish: currentFish }),
+                    signal: controller.signal
                 });
-                const data = await res.json();
+                clearTimeout(timeoutId);
 
-                if(data.spots && data.spots[0] && data.spots[0].fish_types) {
-                    currentFishTypes = data.spots[0].fish_types;
+                if(res.ok) {
+                    webhookData = await res.json();
+                }
+            } catch(e) {
+                console.log('Webhook недоступен:', e.message);
+            }
+
+            // Если webhook вернул данные — используем их
+            if(webhookData && webhookData.spots) {
+                if(webhookData.spots[0] && webhookData.spots[0].fish_types) {
+                    currentFishTypes = webhookData.spots[0].fish_types;
                     renderFilters(currentFishTypes);
                 }
-
-                renderResults(data);
-            } catch(e) {
-                console.error(e);
-                await fallbackSearch(query);
+                renderResults(webhookData);
+                return;
             }
+
+            // Иначе fallback на Яндекс геокодер
+            await fallbackSearch(query);
         }
 
         async function fallbackSearch(query) {
             if(!ymapsReady) {
-                document.getElementById('bottomPanel').innerHTML = '<div class="error">❌ Карта ещё загружается. Подождите секунду.</div>';
+                document.getElementById('bottomPanel').innerHTML = '<div class="error">❌ Карта ещё загружается. Подождите секунду и попробуйте снова.</div>';
                 return;
             }
 
             try {
-                // ✅ Геокодер Яндекса
+                console.log('Используем Яндекс геокодер для:', query);
                 const geoResult = await ymaps.geocode(query, { results: 1, lang: 'ru_RU' });
                 const geoObjects = geoResult.geoObjects;
 
@@ -337,13 +341,14 @@
                 }
 
                 const place = geoObjects.get(0);
-                const coords = place.geometry.getCoordinates(); // [lat, lon]
+                const coords = place.geometry.getCoordinates();
                 const lat = coords[0];
                 const lon = coords[1];
                 const fullName = (place.properties.get('text') || '').toLowerCase();
                 const name = place.properties.get('name') || 'Неизвестно';
 
-                // Определяем тип водоёма
+                console.log('Найдено:', name, lat, lon);
+
                 let fishTypes = ['щука','судак','окунь','лещ','карась'];
                 let warning = '';
                 let waterType = 'fresh';
@@ -360,6 +365,7 @@
                 currentFishTypes = fishTypes;
                 renderFilters(fishTypes);
 
+                console.log('Запрашиваем погоду...');
                 const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,pressure_msl&timezone=auto`);
                 const weather = await weatherRes.json();
                 const w = weather.current;
@@ -389,8 +395,8 @@
                 renderResults(result);
 
             } catch(e) {
-                console.error(e);
-                document.getElementById('bottomPanel').innerHTML = '<div class="error">❌ Ошибка загрузки. Проверьте интернет.</div>';
+                console.error('Ошибка fallback:', e);
+                document.getElementById('bottomPanel').innerHTML = `<div class="error">❌ Ошибка: ${e.message}<br><br>Проверьте консоль (F12) для деталей.</div>`;
             }
         }
 
@@ -517,7 +523,6 @@
                 </div>
                 `;
 
-                // ✅ Яндекс Placemark
                 if(map) {
                     const placemark = new ymaps.Placemark([spot.lat, spot.lon], {
                         balloonContent: `<b>${spot.name}</b><br>Клёв: ${data.biteScore}/10`
@@ -531,7 +536,6 @@
 
             panel.innerHTML = html;
 
-            // Центрируем карту
             if(map && data.spots.length > 0) {
                 map.setCenter([data.spots[0].lat, data.spots[0].lon], 12);
             }
@@ -552,7 +556,6 @@
                         map.setCenter([lat, lon], 14);
                     }
 
-                    // Обратный геокодер Яндекса
                     if(ymapsReady) {
                         ymaps.geocode([lat, lon], { kind: 'locality', results: 1 }).then(res => {
                             const name = res.geoObjects.get(0)?.properties.get('name') || 'Рядом со мной';
