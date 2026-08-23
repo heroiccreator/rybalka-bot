@@ -261,6 +261,9 @@
 
         initMap();
 
+        // Убираем флаг Украины из стандартной атрибуции Leaflet
+        map.attributionControl.setPrefix('');
+
         let currentFish = 'all';
         let lastQuery = '';
         let currentFishTypes = ['щука','судак','окунь','лещ','карась'];
