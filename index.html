@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>🎣 Рыбалка на карте</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://api-maps.yandex.ru/2.1/?apikey=14831b38-5a7e-4f15-b3c7-9e48b9ad151a&lang=ru_RU" type="text/javascript"></script>
+    <script src="https://api-maps.yandex.ru/2.1/?apikey=11c4083f-96f2-4c7d-8329-b2f0bb376c66&lang=ru_RU" type="text/javascript"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -230,19 +230,26 @@
 
         let map;
         let ymapsReady = false;
+        let mapError = '';
 
         ymaps.ready(() => {
             ymapsReady = true;
-            map = new ymaps.Map('map', {
-                center: [55.7558, 37.6173],
-                zoom: 5,
-                controls: ['zoomControl']
-            });
-            map.controls.remove('searchControl');
-            map.controls.remove('trafficControl');
-            map.controls.remove('typeSelector');
-            map.controls.remove('fullscreenControl');
-            map.controls.remove('rulerControl');
+            try {
+                map = new ymaps.Map('map', {
+                    center: [55.7558, 37.6173],
+                    zoom: 5,
+                    controls: ['zoomControl']
+                });
+                map.controls.remove('searchControl');
+                map.controls.remove('trafficControl');
+                map.controls.remove('typeSelector');
+                map.controls.remove('fullscreenControl');
+                map.controls.remove('rulerControl');
+                console.log('✅ Яндекс карта загружена');
+            } catch(e) {
+                mapError = e.message;
+                console.error('❌ Ошибка инициализации карты:', e);
+            }
         });
 
         let currentFish = 'all';
@@ -277,7 +284,7 @@
         }
 
         function clearMarkers() {
-            if(map) map.geoObjects.removeAll();
+            if(map && map.geoObjects) map.geoObjects.removeAll();
         }
 
         async function searchSpot(query) {
@@ -288,6 +295,16 @@
             const panel = document.getElementById('bottomPanel');
             panel.innerHTML = '<div class="loading">🔍 Ищем информацию о водоёме...</div>';
             tg.MainButton.show();
+
+            // Проверка: карта загружена?
+            if(!ymapsReady) {
+                panel.innerHTML = '<div class="error">❌ Карта ещё загружается. Подождите 2-3 секунды и попробуйте снова.</div>';
+                return;
+            }
+            if(mapError) {
+                panel.innerHTML = `<div class="error">❌ Ошибка карты: ${mapError}<br><br>Возможно, API-ключ невалиден. Проверьте консоль (F12).</div>`;
+                return;
+            }
 
             // Пробуем webhook с таймаутом
             let webhookData = null;
@@ -325,11 +342,6 @@
         }
 
         async function fallbackSearch(query) {
-            if(!ymapsReady) {
-                document.getElementById('bottomPanel').innerHTML = '<div class="error">❌ Карта ещё загружается. Подождите секунду и попробуйте снова.</div>';
-                return;
-            }
-
             try {
                 console.log('Используем Яндекс геокодер для:', query);
                 const geoResult = await ymaps.geocode(query, { results: 1, lang: 'ru_RU' });
@@ -523,7 +535,8 @@
                 </div>
                 `;
 
-                if(map) {
+                // ✅ Проверка: map существует?
+                if(map && map.geoObjects) {
                     const placemark = new ymaps.Placemark([spot.lat, spot.lon], {
                         balloonContent: `<b>${spot.name}</b><br>Клёв: ${data.biteScore}/10`
                     }, {
@@ -536,7 +549,8 @@
 
             panel.innerHTML = html;
 
-            if(map && data.spots.length > 0) {
+            // ✅ Проверка: map существует?
+            if(map && map.setCenter && data.spots.length > 0) {
                 map.setCenter([data.spots[0].lat, data.spots[0].lon], 12);
             }
         }
@@ -552,7 +566,7 @@
                     const lat = pos.coords.latitude;
                     const lon = pos.coords.longitude;
 
-                    if(map) {
+                    if(map && map.setCenter) {
                         map.setCenter([lat, lon], 14);
                     }
 
