@@ -5,9 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>🎣 Рыбалка на карте</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <!-- MapLibre GL JS для OpenFreeMap -->
-    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
-    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <!-- Яндекс Карты API -->
+    <script src="https://api-maps.yandex.ru/2.1/?apikey=14831b38-5a7e-4f15-b3c7-9e48b9ad151a&lang=ru_RU" type="text/javascript"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -99,13 +98,11 @@
             min-height: 0;
             background: var(--bg);
         }
-        /* Стилизуем атрибуцию MapLibre */
-        .maplibregl-ctrl-attrib {
-            background: rgba(15, 20, 25, 0.85) !important;
-            color: var(--text-secondary) !important;
-            font-size: 9px !important;
+        /* Скрываем яркую атрибуцию Яндекса */
+        .ymaps-2-1-79-copyright {
+            opacity: 0.5 !important;
         }
-        .maplibregl-ctrl-attrib a {
+        .ymaps-2-1-79-copyright__link {
             color: var(--text-secondary) !important;
         }
         .bottom-panel {
@@ -237,22 +234,29 @@
         tg.MainButton.setText('🔄 Обновить данные');
         tg.MainButton.onClick(() => { if(lastQuery) searchSpot(lastQuery); });
 
-        // ✅ OpenFreeMap — бесплатно, без ключа, без регистрации
-        const map = new maplibregl.Map({
-            container: 'map',
-            style: 'https://tiles.openfreemap.org/styles/liberty/style.json',
-            center: [37.6173, 55.7558], // [lon, lat]
-            zoom: 5,
-            attributionControl: true
-        });
+        // ✅ Яндекс Карты
+        let map;
+        let ymapsReady = false;
 
-        // Кастомная кнопка геолокации
-        map.addControl(new maplibregl.NavigationControl(), 'top-left');
+        ymaps.ready(() => {
+            ymapsReady = true;
+            map = new ymaps.Map('map', {
+                center: [55.7558, 37.6173], // [широта, долгота]
+                zoom: 5,
+                controls: ['zoomControl']
+            });
+
+            // Тёмная тема Яндекса (если доступна) или стандартная
+            // Убираем лишние контролы
+            map.controls.remove('searchControl');
+            map.controls.remove('trafficControl');
+            map.controls.remove('typeSelector');
+            map.controls.remove('fullscreenControl');
+            map.controls.remove('rulerControl');
+        });
 
         let currentFish = 'all';
         let lastQuery = '';
-        let markers = [];
-        let popups = [];
         let currentFishTypes = ['щука','судак','окунь','лещ','карась'];
 
         function setFish(fish) {
@@ -283,10 +287,8 @@
         }
 
         function clearMarkers() {
-            markers.forEach(m => m.remove());
-            popups.forEach(p => p.remove());
-            markers = [];
-            popups = [];
+            if(!map) return;
+            map.geoObjects.removeAll();
         }
 
         async function searchSpot(query) {
@@ -319,29 +321,38 @@
         }
 
         async function fallbackSearch(query) {
-            try {
-                const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&accept-language=ru`);
-                const geoData = await geoRes.json();
+            if(!ymapsReady) {
+                document.getElementById('bottomPanel').innerHTML = '<div class="error">❌ Карта ещё загружается. Подождите секунду.</div>';
+                return;
+            }
 
-                if(!geoData || geoData.length === 0) {
+            try {
+                // ✅ Геокодер Яндекса
+                const geoResult = await ymaps.geocode(query, { results: 1, lang: 'ru_RU' });
+                const geoObjects = geoResult.geoObjects;
+
+                if(geoObjects.getLength() === 0) {
                     document.getElementById('bottomPanel').innerHTML = '<div class="error">❌ Водоём не найден. Попробуйте другой запрос.</div>';
                     return;
                 }
 
-                const place = geoData[0];
-                const lat = parseFloat(place.lat);
-                const lon = parseFloat(place.lon);
-                const name = place.display_name.toLowerCase();
+                const place = geoObjects.get(0);
+                const coords = place.geometry.getCoordinates(); // [lat, lon]
+                const lat = coords[0];
+                const lon = coords[1];
+                const fullName = (place.properties.get('text') || '').toLowerCase();
+                const name = place.properties.get('name') || 'Неизвестно';
 
+                // Определяем тип водоёма
                 let fishTypes = ['щука','судак','окунь','лещ','карась'];
                 let warning = '';
                 let waterType = 'fresh';
 
-                if(name.includes('море') || name.includes('sea') || name.includes('ocean') || name.includes('океан')) {
+                if(fullName.includes('море') || fullName.includes('sea') || fullName.includes('ocean') || fullName.includes('океан')) {
                     fishTypes = ['треска','палтус','сёмга','морской окунь','камбала'];
                     warning = '⚠️ Морская рыбалка. Пресноводная рыба (щука, лещ, карась) здесь не водится.';
                     waterType = 'salt';
-                } else if(name.includes('река') || name.includes('river')) {
+                } else if(fullName.includes('река') || fullName.includes('river')) {
                     fishTypes = ['щука','судак','окунь','лещ','голавль','язь'];
                     waterType = 'river';
                 }
@@ -358,8 +369,8 @@
 
                 const result = {
                     spots: [{
-                        name: place.display_name.split(',')[0],
-                        description: place.display_name,
+                        name: name,
+                        description: place.properties.get('text') || '',
                         lat, lon,
                         fish_types: fishTypes,
                         water_type: waterType
@@ -506,32 +517,23 @@
                 </div>
                 `;
 
-                // ✅ MapLibre Marker
-                const el = document.createElement('div');
-                el.style.width = '24px';
-                el.style.height = '24px';
-                el.style.background = 'var(--primary)';
-                el.style.borderRadius = '50%';
-                el.style.border = '3px solid #fff';
-                el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
-                el.style.cursor = 'pointer';
-
-                const marker = new maplibregl.Marker(el)
-                    .setLngLat([spot.lon, spot.lat])
-                    .setPopup(new maplibregl.Popup({ offset: 15 }).setHTML(`<div style="font-family:Inter,sans-serif;padding:4px;"><b>${spot.name}</b><br>Клёв: ${data.biteScore}/10</div>`))
-                    .addTo(map);
-                markers.push(marker);
+                // ✅ Яндекс Placemark
+                if(map) {
+                    const placemark = new ymaps.Placemark([spot.lat, spot.lon], {
+                        balloonContent: `<b>${spot.name}</b><br>Клёв: ${data.biteScore}/10`
+                    }, {
+                        preset: 'islands#circleIcon',
+                        iconColor: '#00d4aa'
+                    });
+                    map.geoObjects.add(placemark);
+                }
             });
 
             panel.innerHTML = html;
 
             // Центрируем карту
-            if(data.spots.length > 0) {
-                map.flyTo({
-                    center: [data.spots[0].lon, data.spots[0].lat],
-                    zoom: 12,
-                    essential: true
-                });
+            if(map && data.spots.length > 0) {
+                map.setCenter([data.spots[0].lat, data.spots[0].lon], 12);
             }
         }
 
@@ -546,19 +548,19 @@
                     const lat = pos.coords.latitude;
                     const lon = pos.coords.longitude;
 
-                    map.flyTo({
-                        center: [lon, lat],
-                        zoom: 14,
-                        essential: true
-                    });
+                    if(map) {
+                        map.setCenter([lat, lon], 14);
+                    }
 
-                    fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=ru`)
-                        .then(r => r.json())
-                        .then(data => {
-                            const name = data.address.city || data.address.town || data.address.village || 'Рядом со мной';
+                    // Обратный геокодер Яндекса
+                    if(ymapsReady) {
+                        ymaps.geocode([lat, lon], { kind: 'locality', results: 1 }).then(res => {
+                            const name = res.geoObjects.get(0)?.properties.get('name') || 'Рядом со мной';
                             searchSpot(name);
-                        })
-                        .catch(() => searchSpot(`${lat},${lon}`));
+                        }).catch(() => searchSpot(`${lat},${lon}`));
+                    } else {
+                        searchSpot(`${lat},${lon}`);
+                    }
                 },
                 err => {
                     document.getElementById('bottomPanel').innerHTML = '<div class="error">❌ Не удалось получить геолокацию</div>';
